@@ -37,6 +37,9 @@
 	var allRows = []; // for "full log" CSV export
 
 	var els = {
+		processSelect: document.getElementById("process-select"),
+		dateFromLabel: document.getElementById("date-from-label"),
+		dateToLabel: document.getElementById("date-to-label"),
 		dateFrom: document.getElementById("date_from"),
 		dateTo: document.getElementById("date_to"),
 		btnStart: document.getElementById("btn-start"),
@@ -63,38 +66,79 @@
 		resumeHint: document.getElementById("resume-hint"),
 	};
 
+	function currentProcess() {
+		return (els.processSelect && els.processSelect.value) || "napravlenia";
+	}
+
+	// Подпись полей периода зависит от процесса — фильтр всегда идёт по дате
+	// соответствующего поля на бэкенде (protocol_date_field в lib/inn.php), и
+	// у "Направления Максвелл" это не "Дата протокола", а "Утверждённая дата
+	// ПИ" — подпись должна называть реальное поле, иначе легко перепутать,
+	// что именно фильтруется.
+	var DATE_LABELS = {
+		napravlenia: "Дата протокола",
+		maxwell: "Утверждённая дата ПИ",
+	};
+	function refreshDateLabels() {
+		var label = DATE_LABELS[currentProcess()] || "Дата";
+		if (els.dateFromLabel) els.dateFromLabel.textContent = label + ", с";
+		if (els.dateToLabel) els.dateToLabel.textContent = label + ", по";
+	}
+
 	/**
 	 * Курсор возобновления: последний обработанный ID хранится в localStorage
-	 * (на origin, где развёрнуто приложение; внутри iframe Б24 он работает). Храним отдельно для
-	 * реального и сухого прогона, вместе с периодом — чтобы по подсказке было
-	 * видно, к какому запуску относится ID. Любые сбои storage игнорируем.
+	 * (на origin, где развёрнуто приложение; внутри iframe Б24 он работает).
+	 * Храним ОТДЕЛЬНО по смарт-процессу (по просьбе пользователя 01.10.2026,
+	 * переключатель процесса) — ID элементов "Направления" и "Направления
+	 * Максвелл" берутся из разных, несвязанных пространств ID (разные
+	 * entityTypeId), подставлять курсор одного процесса в другой бессмысленно
+	 * и опасно (можно случайно начать не с того места). Внутри одного процесса
+	 * — как раньше, общий для сухого и обычного прогона, вместе с периодом,
+	 * чтобы по подсказке было видно, к какому запуску относится ID. Любые
+	 * сбои storage игнорируем.
 	 */
-	var RESUME_KEY = "ifp_resume_cursor";
+	var RESUME_KEY_PREFIX = "ifp_resume_cursor_";
+	function resumeKey() {
+		return RESUME_KEY_PREFIX + currentProcess();
+	}
 	function saveCursor() {
 		if (!afterId) return;
 		try {
-			localStorage.setItem(RESUME_KEY, JSON.stringify({
+			localStorage.setItem(resumeKey(), JSON.stringify({
 				id: afterId, from: els.dateFrom.value || "", to: els.dateTo.value || "",
 				dry: dryRun, at: Date.now(),
 			}));
 		} catch (e) {}
 	}
 	function clearCursor() {
-		try { localStorage.removeItem(RESUME_KEY); } catch (e) {}
+		try { localStorage.removeItem(resumeKey()); } catch (e) {}
 	}
 	function loadCursor() {
-		try { return JSON.parse(localStorage.getItem(RESUME_KEY) || "null"); } catch (e) { return null; }
+		try { return JSON.parse(localStorage.getItem(resumeKey()) || "null"); } catch (e) { return null; }
 	}
 	function describeCursor(c) {
 		var period = (c.from || c.to) ? (c.from || "…") + " — " + (c.to || "…") : "весь смарт-процесс";
 		return "Сохранён ID " + c.id + " (" + (c.dry ? "сухой прогон, " : "") + period + ", " +
 			new Date(c.at).toLocaleString("ru-RU") + ")";
 	}
-	(function initResume() {
+	function refreshResumeHint() {
 		var c = loadCursor();
 		if (c && c.id) {
 			els.resumeId.value = c.id;
 			els.resumeHint.textContent = describeCursor(c);
+		} else {
+			els.resumeId.value = "";
+			els.resumeHint.textContent = "";
+		}
+	}
+	(function initResume() {
+		refreshResumeHint();
+		refreshDateLabels();
+		if (els.processSelect) {
+			els.processSelect.addEventListener("change", function () {
+				refreshResumeHint();
+				refreshDateLabels();
+			});
 		}
 		els.resumeCheck.addEventListener("change", function () {
 			els.resumeId.disabled = !els.resumeCheck.checked;
@@ -220,6 +264,7 @@
 	function fetchTotalCount() {
 		var body = new URLSearchParams();
 		authBody(body);
+		body.set("process", currentProcess());
 		body.set("action", "count");
 		body.set("after_id", String(afterId)); // при продолжении считаем остаток после курсора
 		body.set("date_from", els.dateFrom.value || "");
@@ -271,6 +316,7 @@
 
 		var body = new URLSearchParams();
 		authBody(body);
+		body.set("process", currentProcess());
 		body.set("date_from", els.dateFrom.value || "");
 		body.set("date_to", els.dateTo.value || "");
 		body.set("after_id", String(afterId));
@@ -319,6 +365,7 @@
 		els.btnDryRun.disabled = false;
 		els.btnDryRun.textContent = "Сухой прогон (без записи)";
 		els.btnStop.disabled = true;
+		if (els.processSelect) els.processSelect.disabled = false;
 		if (message) {
 			els.progressLine.textContent = message;
 		}
@@ -344,6 +391,7 @@
 		els.btnDryRun.disabled = true;
 		(dryRun ? els.btnDryRun : els.btnStart).textContent = "Выполняется…";
 		els.btnStop.disabled = false;
+		if (els.processSelect) els.processSelect.disabled = true;
 		els.progressLine.textContent = resumeFrom ? "Продолжаем после ID " + resumeFrom + "… считаем остаток" : "Считаем общее число элементов…";
 
 		// При продолжении count считает остаток после курсора (after_id), так что % честный.

@@ -2,17 +2,23 @@
 require_once(__DIR__ . "/b24.php");
 
 /**
- * Массовое заполнение поля "ИНН Заявителя" на смарт-процессе "Направления"
- * (entityTypeId=1038), когда поле ufCrm6_1786523064951 ещё пустое.
+ * Массовое заполнение поля "ИНН Заявителя" (и "Номера протокола"/аналога) на
+ * смарт-процессах Б24 — какой именно смарт-процесс обрабатывается, задаёт
+ * $profile (см. LK_IFP_PROCESSES/LkIfpGetProcessProfile ниже), выбранный
+ * пользователем в интерфейсе переключателем над полями периода.
  * Кнопка запуска — /inn-from-pdf/ (см. index.php/run-ajax.php). Сессия 2026-09-24,
- * доработка — двойной прогон + проверка по ЕГРЮЛ/ЕГРИП — сессия 2026-09-25.
+ * доработка — двойной прогон + проверка по ЕГРЮЛ/ЕГРИП — сессия 2026-09-25,
+ * поддержка нескольких смарт-процессов — сессия 2026-10-01.
  *
  * Источники ИНН, в порядке приоритета (см. LkIfpProcessItem):
- *   1. "Файл направления" (ufCrm6_1742197090980) — появляется в работе раньше
- *      протокола, поэтому основной источник (позволяет заполнить поле ещё до
- *      готовности протокола).
- *   2. "Файл протокола" (ufCrm6_1742496660050) — если тоже есть, сверяем с (1);
- *      при расхождении, по решению пользователя 2026-09-25, доверяем протоколу.
+ *   1. "Файл направления" ($profile['direction_file_field'], если задан) —
+ *      появляется в работе раньше протокола, поэтому основной источник
+ *      (позволяет заполнить поле ещё до готовности протокола). У процессов
+ *      с одним файловым источником (например "Направления Максвелл") это
+ *      поле пустое — используется только источник (2).
+ *   2. "Файл протокола" ($profile['protocol_file_field']) — если направление
+ *      тоже дало результат, сверяем с (1); при расхождении, по решению
+ *      пользователя 2026-09-25, доверяем протоколу.
  * Перед фактической записью в Б24 итоговый ИНН дополнительно проверяется на
  * существование через публичный поиск ФНС (LkIfpEgrulLookup) — если ИНН
  * структурно валиден (прошёл контрольную сумму), но такого просто нет в
@@ -20,16 +26,59 @@ require_once(__DIR__ . "/b24.php");
  *
  * Поле "ИНН Заявителя" уже существует и заполняется на части направлений
  * вручную/другими процессами (используется в /proverka-protokola/check-ajax.php),
- * здесь его код продублирован константой, а не импортирован оттуда — та страница
+ * здесь его код продублирован, а не импортирован оттуда — та страница
  * не подключаема как библиотека (самостоятельный ajax-скрипт).
  */
 
-const LK_IFP_APPLICANT_INN_FIELD = "ufCrm6_1786523064951"; // "ИНН Заявителя"
-const LK_IFP_DIRECTION_FILE_FIELD = "ufCrm6_1742197090980"; // "Файл направления" (isMultiple, появляется раньше протокола)
-const LK_IFP_PROTOCOL_FILE_FIELD = "ufCrm6_1742496660050"; // "Файл протокола"
-const LK_IFP_PROTOCOL_DATE_FIELD = "ufCrm6_1742496620258"; // "Дата протокола"
-const LK_IFP_PROTOCOL_NUMBER_FIELD = "ufCrm6_1742496594756"; // "Номер протокола"
-const LK_IFP_ENTITY_TYPE_ID = 1038;
+/**
+ * Реестр поддерживаемых смарт-процессов (по просьбе пользователя 01.10.2026 —
+ * переключатель смарт-процесса в интерфейсе, над полями периода). "Направления
+ * Максвелл" (entityTypeId=1056) — ОТДЕЛЬНАЯ CRM-сущность со своими кодами
+ * полей, даже притом что называется похоже на "Направления" (1038); коды
+ * полей разных сущностей никогда не совпадают в Б24, поэтому у каждого
+ * процесса — свой набор ниже.
+ *
+ * У "Направления Максвелл", в отличие от "Направления", только ОДИН файловый
+ * источник — "Утверждённый ПИ/Макет" (аналог "Файла протокола"), отдельного
+ * "Файла направления" там нет. direction_file_field оставлен null —
+ * LkIfpProcessItem уже умеет работать с одним источником (ветка "Файла
+ * направления" просто не находит кандидата, когда поле пустое/отсутствует,
+ * и используется протокольный источник — код специально не менялся).
+ */
+const LK_IFP_PROCESSES = [
+	"napravlenia" => [
+		"title" => "Направления",
+		"entity_type_id" => 1038,
+		"applicant_inn_field" => "ufCrm6_1786523064951", // "ИНН Заявителя"
+		"direction_file_field" => "ufCrm6_1742197090980", // "Файл направления"
+		"direction_file_multiple" => true,
+		"protocol_file_field" => "ufCrm6_1742496660050", // "Файл протокола"
+		"protocol_file_multiple" => false,
+		"protocol_date_field" => "ufCrm6_1742496620258", // "Дата протокола"
+		"protocol_number_field" => "ufCrm6_1742496594756", // "Номер протокола"
+	],
+	"maxwell" => [
+		"title" => "Направления Максвелл",
+		"entity_type_id" => 1056,
+		"applicant_inn_field" => "ufCrm12_1786523941870", // "ИНН Заявителя"
+		"direction_file_field" => null, // отдельного "Файла направления" нет — один источник
+		"direction_file_multiple" => false,
+		"protocol_file_field" => "ufCrm12_1761122990", // "Утверждённый ПИ/Макет" (isMultiple)
+		"protocol_file_multiple" => true,
+		"protocol_date_field" => "ufCrm12_1761123031", // "Утверждённая дата ПИ"
+		"protocol_number_field" => "ufCrm12_1761123006", // "Утверждённый номер ПИ"
+	],
+];
+
+/**
+ * Конфигурация полей выбранного смарт-процесса или null, если код процесса не
+ * из белого списка — ajax.php должен в этом случае отказать в запросе
+ * (ifpFail), а не падать на несуществующих полях чужой сущности.
+ */
+function LkIfpGetProcessProfile(string $process): ?array
+{
+	return LK_IFP_PROCESSES[$process] ?? null;
+}
 
 /**
  * ИНН, которые заведомо НЕ являются ИНН заявителя, даже если структурно валидны
@@ -645,15 +694,19 @@ function LkIfpExtractProtocolNumber(string $text): ?string
 }
 
 /**
- * Обрабатывает один элемент 1038 — двойной прогон (сессия 2026-09-25, по
- * просьбе пользователя): "Файл направления" (ufCrm6_1742197090980) появляется
+ * Обрабатывает один элемент смарт-процесса — двойной прогон (сессия
+ * 2026-09-25, по просьбе пользователя): "Файл направления" (если у процесса
+ * вообще есть такое поле — см. $profile['direction_file_field']) появляется
  * в работе РАНЬШЕ, чем готов "Файл протокола" — поэтому это основной
  * источник ИНН (позволяет заполнить поле ещё до готовности протокола). Если
  * файл протокола тоже есть — им дополнительно сверяем результат. Если оба
  * источника дали однозначный, но РАЗНЫЙ ИНН — по прямому решению
  * пользователя 2026-09-25 доверяем протоколу (это итоговый документ
  * лаборатории), но расхождение всё равно попадает в журнал для прозрачности,
- * а не тихо перезаписывается.
+ * а не тихо перезаписывается. У процессов с ОДНИМ файловым источником
+ * (direction_file_field === null, например "Направления Максвелл") ветка
+ * "направления" просто не выполняется — результат целиком определяется
+ * источником "протокола".
  *
  * НЕ пишет в Б24 — только решает, что нужно записать (сама запись —
  * в LkIfpRunBatch, чтобы batch-функция могла единообразно логировать все
@@ -662,10 +715,11 @@ function LkIfpExtractProtocolNumber(string $text): ?string
  * status: filled_pending | skipped_no_file | skipped_download_error |
  *         skipped_no_candidate
  */
-function LkIfpProcessItem(array $item): array
+function LkIfpProcessItem(array $item, array $profile): array
 {
-	$directionValue = $item[LK_IFP_DIRECTION_FILE_FIELD] ?? null;
-	$protocolValue = $item[LK_IFP_PROTOCOL_FILE_FIELD] ?? null;
+	$directionField = $profile["direction_file_field"];
+	$directionValue = $directionField !== null ? ($item[$directionField] ?? null) : null;
+	$protocolValue = $item[$profile["protocol_file_field"]] ?? null;
 
 	if (empty($directionValue) && empty($protocolValue))
 	{
@@ -679,7 +733,7 @@ function LkIfpProcessItem(array $item): array
 
 	if (!empty($directionValue))
 	{
-		$dl = LkIfpDownloadFieldText($directionValue, true);
+		$dl = LkIfpDownloadFieldText($directionValue, $profile["direction_file_multiple"]);
 		if ($dl["ok"])
 		{
 			$dirResolved = LkIfpResolveInn(LkIfpExtractInnCandidates($dl["text"]));
@@ -692,7 +746,7 @@ function LkIfpProcessItem(array $item): array
 
 	if (!empty($protocolValue))
 	{
-		$dl = LkIfpDownloadFieldText($protocolValue, false);
+		$dl = LkIfpDownloadFieldText($protocolValue, $profile["protocol_file_multiple"]);
 		if ($dl["ok"])
 		{
 			$protoResolved = LkIfpResolveInn(LkIfpExtractInnCandidates($dl["text"]));
@@ -761,9 +815,9 @@ function LkIfpProcessItem(array $item): array
  *
  * status: ok | bad_checksum | not_in_egrul | mismatch_with_files
  */
-function LkIfpAuditItem(array $item): array
+function LkIfpAuditItem(array $item, array $profile): array
 {
-	$stored = trim((string)($item[LK_IFP_APPLICANT_INN_FIELD] ?? ""));
+	$stored = trim((string)($item[$profile["applicant_inn_field"]] ?? ""));
 
 	if (!LkIfpInnChecksumValid($stored))
 	{
@@ -781,7 +835,7 @@ function LkIfpAuditItem(array $item): array
 	}
 
 	// ЕГРЮЛ не ответил (капча/сеть) — файлы остаются единственной проверкой.
-	$fresh = LkIfpProcessItem($item);
+	$fresh = LkIfpProcessItem($item, $profile);
 	if ($fresh["status"] === "filled_pending" && $fresh["inn"] !== $stored)
 	{
 		return ["status" => "mismatch_with_files", "stored" => $stored, "fresh_inn" => $fresh["inn"]];
@@ -798,7 +852,7 @@ function LkIfpAuditItem(array $item): array
  * по прямой просьбе пользователя 2026-09-27: "покажем что мы реально весь
  * смарт-процесс делаем", а не просто растущий безадресный счётчик.
  */
-function LkIfpCountItems(?string $dateFrom, ?string $dateTo, int $afterId = 0): ?int
+function LkIfpCountItems(?string $dateFrom, ?string $dateTo, int $afterId, array $profile): ?int
 {
 	// $afterId > 0 — считаем только элементы с id больше курсора (остаток при продолжении
 	// прогона с середины), чтобы полоса прогресса шла от реального остатка, а не от всего периода.
@@ -809,15 +863,15 @@ function LkIfpCountItems(?string $dateFrom, ?string $dateTo, int $afterId = 0): 
 	}
 	if ($dateFrom !== null && $dateFrom !== "")
 	{
-		$filter[">=" . LK_IFP_PROTOCOL_DATE_FIELD] = $dateFrom;
+		$filter[">=" . $profile["protocol_date_field"]] = $dateFrom;
 	}
 	if ($dateTo !== null && $dateTo !== "")
 	{
-		$filter["<=" . LK_IFP_PROTOCOL_DATE_FIELD] = $dateTo;
+		$filter["<=" . $profile["protocol_date_field"]] = $dateTo;
 	}
 
 	$resp = b24RestCall("crm.item.list", [
-		"entityTypeId" => LK_IFP_ENTITY_TYPE_ID,
+		"entityTypeId" => $profile["entity_type_id"],
 		"filter" => $filter,
 		"select" => ["id"],
 	]);
@@ -839,7 +893,7 @@ function LkIfpProtocolNumbersMatch(string $a, string $b): bool
 }
 
 /**
- * Заполняет "Номер протокола" (LK_IFP_PROTOCOL_NUMBER_FIELD), если оно пусто,
+ * Заполняет "Номер протокола" ($profile['protocol_number_field']), если оно пусто,
  * ИЛИ, если оно уже заполнено, сверяет с тем, что реально написано в "Файле
  * протокола" — по прямой просьбе пользователя (сессия 2026-09-27 —
  * заполнение; сессия 2026-09-29 — добавлена сверка уже заполненных). Часть
@@ -857,17 +911,17 @@ function LkIfpProtocolNumbersMatch(string $a, string $b): bool
  *
  * action: filled_pending | ok | mismatch_with_file | skipped_no_file | skipped_no_candidate | skipped_download_error
  */
-function LkIfpVerifyOrFillProtocolNumber(array $item): array
+function LkIfpVerifyOrFillProtocolNumber(array $item, array $profile): array
 {
-	$existing = trim((string)($item[LK_IFP_PROTOCOL_NUMBER_FIELD] ?? ""));
+	$existing = trim((string)($item[$profile["protocol_number_field"]] ?? ""));
 
-	$protocolValue = $item[LK_IFP_PROTOCOL_FILE_FIELD] ?? null;
+	$protocolValue = $item[$profile["protocol_file_field"]] ?? null;
 	if (empty($protocolValue))
 	{
 		return ["action" => "skipped_no_file"];
 	}
 
-	$dl = LkIfpDownloadFieldText($protocolValue, false);
+	$dl = LkIfpDownloadFieldText($protocolValue, $profile["protocol_file_multiple"]);
 	if (!$dl["ok"])
 	{
 		return ["action" => "skipped_download_error", "error" => $dl["error"]];
@@ -934,7 +988,7 @@ function LkIfpVerifyOrFillProtocolNumber(array $item): array
  * расхождения) в problem НЕ попадает — не с чем сравнивать, не считается
  * ошибкой, только отмечается в детали строки журнала.
  */
-function LkIfpRunBatch(?string $dateFrom, ?string $dateTo, int $afterId, float $timeBudgetSeconds, bool $dryRun = false, bool $onlyIncomplete = false): array
+function LkIfpRunBatch(?string $dateFrom, ?string $dateTo, int $afterId, float $timeBudgetSeconds, array $profile, bool $dryRun = false, bool $onlyIncomplete = false): array
 {
 	$deadline = microtime(true) + $timeBudgetSeconds;
 
@@ -948,6 +1002,16 @@ function LkIfpRunBatch(?string $dateFrom, ?string $dateTo, int $afterId, float $
 		"skipped_no_candidate", "skipped_download_error", "skipped_not_in_egrul", "update_failed",
 	];
 
+	// direction_file_field бывает null (процессы с одним файловым источником,
+	// см. LK_IFP_PROCESSES) — select для crm.item.list не должен содержать null.
+	$selectFields = array_values(array_filter([
+		"id", "title",
+		$profile["direction_file_field"],
+		$profile["protocol_file_field"],
+		$profile["applicant_inn_field"],
+		$profile["protocol_number_field"],
+	]));
+
 	while (true)
 	{
 		if (microtime(true) >= $deadline)
@@ -958,17 +1022,17 @@ function LkIfpRunBatch(?string $dateFrom, ?string $dateTo, int $afterId, float $
 		$filter = [">id" => $lastId];
 		if ($dateFrom !== null && $dateFrom !== "")
 		{
-			$filter[">=" . LK_IFP_PROTOCOL_DATE_FIELD] = $dateFrom;
+			$filter[">=" . $profile["protocol_date_field"]] = $dateFrom;
 		}
 		if ($dateTo !== null && $dateTo !== "")
 		{
-			$filter["<=" . LK_IFP_PROTOCOL_DATE_FIELD] = $dateTo;
+			$filter["<=" . $profile["protocol_date_field"]] = $dateTo;
 		}
 
 		$page = b24RestCall("crm.item.list", [
-			"entityTypeId" => LK_IFP_ENTITY_TYPE_ID,
+			"entityTypeId" => $profile["entity_type_id"],
 			"filter" => $filter,
-			"select" => ["id", "title", LK_IFP_DIRECTION_FILE_FIELD, LK_IFP_PROTOCOL_FILE_FIELD, LK_IFP_APPLICANT_INN_FIELD, LK_IFP_PROTOCOL_NUMBER_FIELD],
+			"select" => $selectFields,
 			"order" => ["id" => "asc"],
 		]);
 
@@ -1002,7 +1066,7 @@ function LkIfpRunBatch(?string $dateFrom, ?string $dateTo, int $afterId, float $
 			$id = (int)$item["id"];
 			$lastId = $id;
 
-			$existingInn = trim((string)($item[LK_IFP_APPLICANT_INN_FIELD] ?? ""));
+			$existingInn = trim((string)($item[$profile["applicant_inn_field"]] ?? ""));
 
 			// Режим $onlyIncomplete (авто-прогон по cron): трогаем только элементы, где
 			// чего-то не хватает — пустой ИНН либо пустой номер протокола при уже
@@ -1010,8 +1074,8 @@ function LkIfpRunBatch(?string $dateFrom, ?string $dateTo, int $afterId, float $
 			// ни повторное скачивание файлов) — иначе каждый запуск по кругу
 			// долбил бы ЕГРЮЛ по уже готовым элементам.
 			$needInn = $existingInn === "";
-			$needNumber = trim((string)($item[LK_IFP_PROTOCOL_NUMBER_FIELD] ?? "")) === ""
-				&& !empty($item[LK_IFP_PROTOCOL_FILE_FIELD]);
+			$needNumber = trim((string)($item[$profile["protocol_number_field"]] ?? "")) === ""
+				&& !empty($item[$profile["protocol_file_field"]]);
 			if ($onlyIncomplete && !$needInn && !$needNumber)
 			{
 				continue;
@@ -1021,7 +1085,7 @@ function LkIfpRunBatch(?string $dateFrom, ?string $dateTo, int $afterId, float $
 
 			if ($existingInn === "")
 			{
-				$fillResult = LkIfpProcessItem($item);
+				$fillResult = LkIfpProcessItem($item, $profile);
 
 				if ($fillResult["status"] === "filled_pending")
 				{
@@ -1072,7 +1136,7 @@ function LkIfpRunBatch(?string $dateFrom, ?string $dateTo, int $afterId, float $
 			}
 			else
 			{
-				$auditResult = LkIfpAuditItem($item);
+				$auditResult = LkIfpAuditItem($item, $profile);
 				switch ($auditResult["status"])
 				{
 					case "bad_checksum":
@@ -1093,10 +1157,10 @@ function LkIfpRunBatch(?string $dateFrom, ?string $dateTo, int $afterId, float $
 				}
 			}
 
-			$existingNumber = trim((string)($item[LK_IFP_PROTOCOL_NUMBER_FIELD] ?? ""));
+			$existingNumber = trim((string)($item[$profile["protocol_number_field"]] ?? ""));
 			$numberResult = ($onlyIncomplete && !$needNumber)
 				? ["action" => "not_checked"]
-				: LkIfpVerifyOrFillProtocolNumber($item);
+				: LkIfpVerifyOrFillProtocolNumber($item, $profile);
 			$numberToWrite = null;
 			switch ($numberResult["action"])
 			{
@@ -1133,11 +1197,11 @@ function LkIfpRunBatch(?string $dateFrom, ?string $dateTo, int $afterId, float $
 			$fieldsToUpdate = [];
 			if ($innToWrite !== null)
 			{
-				$fieldsToUpdate[LK_IFP_APPLICANT_INN_FIELD] = $innToWrite;
+				$fieldsToUpdate[$profile["applicant_inn_field"]] = $innToWrite;
 			}
 			if ($numberToWrite !== null)
 			{
-				$fieldsToUpdate[LK_IFP_PROTOCOL_NUMBER_FIELD] = $numberToWrite;
+				$fieldsToUpdate[$profile["protocol_number_field"]] = $numberToWrite;
 			}
 
 			if (!empty($fieldsToUpdate) && $dryRun)
@@ -1159,7 +1223,7 @@ function LkIfpRunBatch(?string $dateFrom, ?string $dateTo, int $afterId, float $
 			elseif (!empty($fieldsToUpdate))
 			{
 				$upd = b24RestCall("crm.item.update", [
-					"entityTypeId" => LK_IFP_ENTITY_TYPE_ID,
+					"entityTypeId" => $profile["entity_type_id"],
 					"id" => $id,
 					"fields" => $fieldsToUpdate,
 				]);

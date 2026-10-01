@@ -27,7 +27,7 @@
 	.all-process-badge { display: inline-block; padding: 10px 14px; border-radius: 8px; background: var(--warn-bg); color: var(--warn-text); font-size: 13px; font-weight: 600; }
 	.field { display: flex; flex-direction: column; gap: 6px; }
 	.field label { font-size: 13px; color: var(--muted); }
-	.field input[type=date] { padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; }
+	.field input[type=date], .field select { padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; background: #fff; }
 	button { cursor: pointer; border: none; border-radius: 10px; padding: 11px 20px; font-size: 14px; font-weight: 600; }
 	button.primary { background: var(--accent); color: #fff; }
 	button.secondary { background: #fff; border: 1px solid var(--border); color: var(--text); }
@@ -87,13 +87,22 @@
 
 	<div class="card">
 		<div class="field-row">
+			<div class="field">
+				<label for="process-select">Смарт-процесс</label>
+				<select id="process-select">
+					<option value="napravlenia">Направления</option>
+					<option value="maxwell">Направления Максвелл</option>
+				</select>
+			</div>
+		</div>
+		<div class="field-row">
 			<div id="date-fields" class="date-fields">
 				<div class="field">
-					<label for="date_from">Дата протокола, с</label>
+					<label for="date_from" id="date-from-label">Дата протокола, с</label>
 					<input type="date" id="date_from">
 				</div>
 				<div class="field">
-					<label for="date_to">Дата протокола, по</label>
+					<label for="date_to" id="date-to-label">Дата протокола, по</label>
 					<input type="date" id="date_to">
 				</div>
 			</div>

@@ -62,15 +62,28 @@ if ($dateTo !== "" && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTo))
 	ifpFail("Некорректная дата конца периода.");
 }
 
+// Переключатель смарт-процесса в интерфейсе (по просьбе пользователя
+// 01.10.2026, над полями периода) — "napravlenia" по умолчанию, для обратной
+// совместимости со старыми сохранёнными курсорами в localStorage (там поля
+// "process" ещё нет, см. app.js). Код процесса — строго по белому списку
+// LK_IFP_PROCESSES, а не произвольная строка: entityTypeId/коды полей чужого
+// смарт-процесса не должны подставляться в запрос.
+$process = trim((string)($_POST["process"] ?? "napravlenia"));
+$profile = LkIfpGetProcessProfile($process);
+if ($profile === null)
+{
+	ifpFail("Неизвестный смарт-процесс.");
+}
+
 if ((string)($_POST["action"] ?? "") === "count")
 {
-	$total = LkIfpCountItems($dateFrom !== "" ? $dateFrom : null, $dateTo !== "" ? $dateTo : null, $afterId);
+	$total = LkIfpCountItems($dateFrom !== "" ? $dateFrom : null, $dateTo !== "" ? $dateTo : null, $afterId, $profile);
 	echo json_encode(["total" => $total], JSON_UNESCAPED_UNICODE);
 	die();
 }
 
 $dryRun = (string)($_POST["dry_run"] ?? "") === "1";
-$result = LkIfpRunBatch($dateFrom !== "" ? $dateFrom : null, $dateTo !== "" ? $dateTo : null, $afterId, 22.0, $dryRun);
+$result = LkIfpRunBatch($dateFrom !== "" ? $dateFrom : null, $dateTo !== "" ? $dateTo : null, $afterId, 22.0, $profile, $dryRun);
 if (!empty($result["error"]) && IfpB24LastError() !== "")
 {
 	$result["error"] .= " (" . IfpB24LastError() . ")";
